@@ -109,7 +109,7 @@ void waitForGroundReply() {
   bool gotReply = false;
 
   // We'll wait up to 2 seconds for a reply
-  while (millis() - start < 500) {
+  while (millis() - start < 2900) {
     if (rf95.available()) {
       // We got a reply
       gotReply = true;
