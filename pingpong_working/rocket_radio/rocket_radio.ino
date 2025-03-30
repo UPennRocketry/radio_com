@@ -91,7 +91,7 @@ void sendTelemetry() {
   // Format packet
   char packet[100];
   snprintf(packet, sizeof(packet),
-           "Velocity:%.2f,Altitude:%.2f,Temp:%.2f,Pressure:%.2f",
+           "Velocity:%.2f,Altitude:%.2f,Temperature:%.2f,Pressure:%.2f",
             velocity, altitude, temperature, pressure);
 
   Serial.print("Sending telemetry: ");

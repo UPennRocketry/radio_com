@@ -63,7 +63,7 @@ void loop() {
 
     if (rf95.recv(buf, &len)) {
       buf[len] = '\0';
-      Serial.print("Got rocket telemetry: ");
+      //Serial.print("Got rocket telemetry: ");
       Serial.println((char*)buf);
       Serial.print("RSSI: ");
       Serial.println(rf95.lastRssi(), DEC);
