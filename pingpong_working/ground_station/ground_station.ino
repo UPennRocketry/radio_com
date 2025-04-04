@@ -1,4 +1,3 @@
-// GroundStationPong.ino
 #include <SPI.h>
 #include <RH_RF95.h>
 
@@ -8,7 +7,7 @@
 
 #define RF95_FREQ 433.0
 
-// Example: Use button pins to decide command
+// Define button pins for command decision
 #define SPEAKER_BUTTON_PIN 10
 #define CAMERA_BUTTON_PIN 5
 
@@ -27,7 +26,7 @@ void setup() {
 
   Serial.println("Ground Station: Ping-Pong - GS Side");
 
-  // Manual reset
+  // Manual reset of LoRa module
   digitalWrite(RFM95_RST, LOW);
   delay(10);
   digitalWrite(RFM95_RST, HIGH);
@@ -46,69 +45,70 @@ void setup() {
   Serial.print("Set Freq to: ");
   Serial.println(RF95_FREQ);
 
-  // Medium TX power is fine
+  // Medium TX power is fine for ground station
   rf95.setTxPower(13, false);
 
-  // Always listening until rocket pings
+  // Start in receiver mode
   rf95.setModeRx();
 
   Serial.println("Ground station ready!");
 }
 
 void loop() {
-  // Listen for rocket telemetry
   if (rf95.available()) {
     uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
     uint8_t len = sizeof(buf);
-
     if (rf95.recv(buf, &len)) {
       buf[len] = '\0';
-      Serial.println((char*)buf);
-
-      // Decide command to send
-      String cmd = decideCommand();
-      sendReply(cmd);
+      String message = String((char*)buf);
+      message.trim();
+      
+      // If the message is the special command request from the rocket...
+      if (message == "CMD_REQ") {
+        Serial.println("Received CMD_REQ from rocket.");
+        // Give rocket time to switch to RX mode
+        delay(50);
+        String cmd = decideCommand();
+        sendReply(cmd);
+      } else {
+        // Otherwise, treat it as telemetry data and display/forward it.
+        Serial.print("Telemetry: ");
+        Serial.println(message);
+      }
     } else {
-      Serial.println("Receive failed");
+      Serial.println("Receive failed.");
     }
   }
+  // Ensure we remain in RX mode
+  rf95.setModeRx();
 }
 
-/**
- * Picks a command based on button states
- */
+// Decide the command based on button states
 String decideCommand() {
-  // If camera button pressed => "CAMERA_ON"
+  // If the camera button is pressed, send "CAMERA_ON"
   if (digitalRead(CAMERA_BUTTON_PIN) == LOW) {
     return "CAMERA_ON";
   }
-
-  // If speaker button pressed => "SPEAKER_ON"
+  // If the speaker button is pressed, send "SPEAKER_ON"
   if (digitalRead(SPEAKER_BUTTON_PIN) == LOW) {
     return "SPEAKER_ON";
   }
-
-  // Otherwise => "SPEAKER_OFF"
+  // Otherwise, default to "SPEAKER_OFF"
   return "SPEAKER_OFF";
 }
 
-/**
- * Sends a single command back to the rocket
- */
+// Sends the command reply with a "CMD:" prefix to clearly mark it as a ground command.
 void sendReply(const String& cmd) {
-  char cmdBuf[20];
-  cmd.toCharArray(cmdBuf, sizeof(cmdBuf));
+  String commandPacket = "CMD:" + cmd;
+  char cmdBuf[30];
+  commandPacket.toCharArray(cmdBuf, sizeof(cmdBuf));
 
   Serial.print("Sending command: ");
-  Serial.println(cmd);
+  Serial.println(commandPacket);
 
   rf95.setModeTx();
   rf95.send((uint8_t*)cmdBuf, strlen(cmdBuf));
   rf95.waitPacketSent();
-
-  // Small delay to let final bits finish
   delay(10);
-
-  // Switch back to RX listening for next rocket ping
   rf95.setModeRx();
 }

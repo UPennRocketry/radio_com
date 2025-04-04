@@ -1,4 +1,3 @@
-// RocketPing.ino
 #include <SPI.h>
 #include <RH_RF95.h>
 #include <math.h>
@@ -15,17 +14,16 @@
 #define SPEAKER_PIN 12
 #define CAMERA_PIN 6
 
-// Radio driver
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
 
-// Telemetry
+// Telemetry variables
 static float angle = 0.0;
 const float angleIncrement = 0.1;
 const float amplitude      = 100.0;
 
-// Timing
-unsigned long lastSendTime   = 0;
-unsigned long telemetryDelay = 1000; // 1 second between pings
+// Timing parameters (in milliseconds)
+const unsigned long telemetryPeriod = 2000; // 2 seconds of telemetry transmission
+const unsigned long commandWindow   = 500;  // 0.5 second window to wait for command
 
 void setup() {
   pinMode(LED, OUTPUT);
@@ -46,7 +44,7 @@ void setup() {
 
   Serial.println("Rocket Ping-Pong: Rocket Side");
 
-  // Manual reset
+  // Manual reset of LoRa module
   digitalWrite(RFM95_RST, LOW);
   delay(10);
   digitalWrite(RFM95_RST, HIGH);
@@ -64,22 +62,54 @@ void setup() {
 
   // High TX power for rocket
   rf95.setTxPower(23, false);
+  
+  // Start in TX mode
+  rf95.setModeTx();
 
   Serial.println("Rocket ready to ping...");
 }
 
 void loop() {
-  unsigned long now = millis();
-  // Send telemetry every 1s (adjust as needed)
-  if (now - lastSendTime >= telemetryDelay) {
+  unsigned long cycleStart = millis();
+  
+  // Transmit telemetry continuously for telemetryPeriod
+  while (millis() - cycleStart < telemetryPeriod) {
     sendTelemetry();
-    lastSendTime = now;
-
-    // After sending, wait for ground station reply
-    waitForGroundReply();
+    delay(100); // Adjust telemetry rate as needed
   }
+  
+  // Flush any lingering data in RX FIFO (if any)
+  flushRadio();
+
+  // Send the special command request
+  sendSpecialRequest();
+  
+  // Short delay to ensure the transmission is fully out
+  delay(50);
+  
+  // Switch to RX mode to wait for ground command reply
+  rf95.setModeRx();
+  unsigned long cmdStart = millis();
+  bool properCommandReceived = false;
+  
+  while (millis() - cmdStart < commandWindow) {
+    if (rf95.available()) {
+      if (handleGroundCommand()) {
+        properCommandReceived = true;
+        break;
+      }
+    }
+  }
+  
+  if (!properCommandReceived) {
+    Serial.println("No valid command received in window.");
+  }
+  
+  // Switch back to TX mode for next cycle
+  rf95.setModeTx();
 }
 
+// Sends a telemetry packet in TX mode
 void sendTelemetry() {
   // Generate telemetry data
   float velocity     = amplitude * sin(angle);
@@ -88,74 +118,89 @@ void sendTelemetry() {
   float pressure     = amplitude * sin(angle + 3.0);
   angle += angleIncrement;
 
-  // Format packet
+  // Format the telemetry packet
   char packet[100];
   snprintf(packet, sizeof(packet),
            "Velocity:%.2f,Altitude:%.2f,Temperature:%.2f,Pressure:%.2f",
-            velocity, altitude, temperature, pressure);
+           velocity, altitude, temperature, pressure);
 
   Serial.print("Sending telemetry: ");
   Serial.println(packet);
 
-  // Send
   rf95.setModeTx();
   rf95.send((uint8_t*)packet, strlen(packet));
   rf95.waitPacketSent();
-  rf95.setModeRx(); // ready to receive reply
+  // Remain in TX mode during telemetry period
 }
 
-void waitForGroundReply() {
-  unsigned long start = millis();
-  bool gotReply = false;
-
-  // We'll wait up to 2 seconds for a reply
-  while (millis() - start < 2000) {
-    if (rf95.available()) {
-      // We got a reply
-      gotReply = true;
-      handleGroundCommand();
-      break;
-    }
-  }
-
-  if (!gotReply) {
-    Serial.println("No command reply from ground station.");
+// Flush any pending data from the radio FIFO
+void flushRadio() {
+  while (rf95.available()) {
+    uint8_t dummyBuf[RH_RF95_MAX_MESSAGE_LEN];
+    uint8_t dummyLen = sizeof(dummyBuf);
+    rf95.recv(dummyBuf, &dummyLen);
   }
 }
 
-void handleGroundCommand() {
+// Sends the special command request message ("CMD_REQ")
+void sendSpecialRequest() {
+  const char specialMsg[] = "CMD_REQ";
+  Serial.println("Sending special command request.");
+  
+  rf95.setModeTx();
+  rf95.send((uint8_t*)specialMsg, strlen(specialMsg));
+  rf95.waitPacketSent();
+  // Do not switch to RX here; handled in main loop.
+}
+
+// Returns true if a valid ground command was processed.
+bool handleGroundCommand() {
   uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
   uint8_t len = sizeof(buf);
-
+  
   if (rf95.recv(buf, &len)) {
-    buf[len] = '\0'; // Null-terminate
-    String command = String((char*)buf);
-    command.trim();
-
+    buf[len] = '\0'; // Null-terminate the received message
+    String receivedStr = String((char*)buf);
+    receivedStr.trim();
+    
     Serial.print("Received command: ");
-    Serial.println(command);
+    Serial.println(receivedStr);
 
-    // Act on the command
-    if (command == "SPEAKER_ON") {
-      Serial.println(">> Speaker ON");
-      digitalWrite(SPEAKER_PIN, LOW);
-    } else if (command == "SPEAKER_OFF") {
-      Serial.println(">> Speaker OFF");
-      digitalWrite(SPEAKER_PIN, HIGH);
-    } else if (command == "CAMERA_ON") {
-      Serial.println(">> Camera ON pulse");
-      digitalWrite(CAMERA_PIN, HIGH);
-      delay(500);
-      digitalWrite(CAMERA_PIN, LOW);
-    } else {
-      Serial.println(">> Unknown command");
+    // Check if the packet is a ground command (should start with "CMD:")
+    if (receivedStr.startsWith("CMD:")) {
+      // Remove the "CMD:" prefix before processing
+      String command = receivedStr.substring(4);
+      command.trim();
+      
+      // Act on the ground command
+      if (command == "SPEAKER_ON") {
+        Serial.println("Activating Speaker.");
+        digitalWrite(SPEAKER_PIN, LOW);  // Active low
+      } else if (command == "SPEAKER_OFF") {
+        Serial.println("Deactivating Speaker.");
+        digitalWrite(SPEAKER_PIN, HIGH);
+      } else if (command == "CAMERA_ON") {
+        Serial.println("Activating Camera.");
+        digitalWrite(CAMERA_PIN, HIGH);
+        delay(500);
+        digitalWrite(CAMERA_PIN, LOW);
+      } else {
+        Serial.println("Unknown command received.");
+      }
+
+      // Optional: Blink LED to signal command processing
+      digitalWrite(LED, HIGH);
+      delay(100);
+      digitalWrite(LED, LOW);
+      
+      return true; // Valid ground command processed
     }
-
-    // Optional LED blink
-    digitalWrite(LED, HIGH);
-    delay(100);
-    digitalWrite(LED, LOW);
-  } else {
-    Serial.println("Receive failed on command packet");
+    else {
+      Serial.println("Received packet is not a valid ground command. Ignoring.");
+    }
   }
+  else {
+    Serial.println("Receive failed on command packet.");
+  }
+  return false; // No valid command was processed
 }
