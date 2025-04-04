@@ -8,9 +8,8 @@
 
 #define RF95_FREQ 433.0
 
-// Example: Read buttons to decide if speaker is ON or OFF
+// Example: Use button pins to decide command
 #define SPEAKER_BUTTON_PIN 10
-// Example: Read button to trigger camera
 #define CAMERA_BUTTON_PIN 5
 
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
@@ -23,10 +22,10 @@ void setup() {
   pinMode(CAMERA_BUTTON_PIN, INPUT_PULLUP);
 
   Serial.begin(9600);
-  while (!Serial); // for SAMD
+  while (!Serial);
   delay(100);
 
-  Serial.println("Ground Station Ping-Pong: GS Side");
+  Serial.println("Ground Station: Ping-Pong - GS Side");
 
   // Manual reset
   digitalWrite(RFM95_RST, LOW);
@@ -47,62 +46,69 @@ void setup() {
   Serial.print("Set Freq to: ");
   Serial.println(RF95_FREQ);
 
-  // Medium TX power
+  // Medium TX power is fine
   rf95.setTxPower(13, false);
 
-  // Start in receive mode
+  // Always listening until rocket pings
   rf95.setModeRx();
+
+  Serial.println("Ground station ready!");
 }
 
 void loop() {
-  // Listen for a telemetry packet from the rocket
+  // Listen for rocket telemetry
   if (rf95.available()) {
-    // 1) We got data
     uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
     uint8_t len = sizeof(buf);
 
     if (rf95.recv(buf, &len)) {
       buf[len] = '\0';
-      //Serial.print("Got rocket telemetry: ");
       Serial.println((char*)buf);
-      Serial.print("RSSI: ");
-      Serial.println(rf95.lastRssi(), DEC);
 
-      // 2) Decide what command to send back
-      sendCommand();
+      // Decide command to send
+      String cmd = decideCommand();
+      sendReply(cmd);
     } else {
       Serial.println("Receive failed");
     }
   }
 }
 
-// Builds a command based on button states
-void sendCommand() {
-  // Example: If camera button pressed -> "CAMERA_ON"
-  // If speaker button pressed -> "SPEAKER_ON", else "SPEAKER_OFF"
-
-  String cmd;
+/**
+ * Picks a command based on button states
+ */
+String decideCommand() {
+  // If camera button pressed => "CAMERA_ON"
   if (digitalRead(CAMERA_BUTTON_PIN) == LOW) {
-    cmd = "CAMERA_ON";
-  } else if (digitalRead(SPEAKER_BUTTON_PIN) == LOW) {
-    cmd = "SPEAKER_ON";
-  } else {
-    cmd = "SPEAKER_OFF";
+    return "CAMERA_ON";
   }
 
-  // Print to console
+  // If speaker button pressed => "SPEAKER_ON"
+  if (digitalRead(SPEAKER_BUTTON_PIN) == LOW) {
+    return "SPEAKER_ON";
+  }
+
+  // Otherwise => "SPEAKER_OFF"
+  return "SPEAKER_OFF";
+}
+
+/**
+ * Sends a single command back to the rocket
+ */
+void sendReply(const String& cmd) {
+  char cmdBuf[20];
+  cmd.toCharArray(cmdBuf, sizeof(cmdBuf));
+
   Serial.print("Sending command: ");
   Serial.println(cmd);
 
-  // Convert to c-string
-  char commandBuf[20];
-  cmd.toCharArray(commandBuf, sizeof(commandBuf));
-
-  // Switch to TX
   rf95.setModeTx();
-  rf95.send((uint8_t*)commandBuf, strlen(commandBuf));
+  rf95.send((uint8_t*)cmdBuf, strlen(cmdBuf));
   rf95.waitPacketSent();
 
-  // Switch back to RX
+  // Small delay to let final bits finish
+  delay(10);
+
+  // Switch back to RX listening for next rocket ping
   rf95.setModeRx();
 }
