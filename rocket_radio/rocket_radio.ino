@@ -13,6 +13,8 @@
 #define LED 13
 #define SPEAKER_PIN 12
 #define CAMERA_PIN 6
+#define RRC3_TX 1  // TX to RRC3 Rx
+#define RRC3_RX 0  // RX from RRC3 Tx
 
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
 
@@ -39,6 +41,7 @@ void setup() {
   digitalWrite(RFM95_RST, HIGH);
 
   Serial.begin(9600);
+  Serial1.begin(9600); // Initialize RRC3_RX serial communication
   while (!Serial); // for SAMD
   delay(100);
 
@@ -111,26 +114,70 @@ void loop() {
 
 // Sends a telemetry packet in TX mode
 void sendTelemetry() {
-  // Generate telemetry data
-  float velocity     = amplitude * sin(angle);
-  float altitude     = amplitude * sin(angle + 1.0);
-  float temperature  = amplitude * sin(angle + 2.0);
-  float pressure     = amplitude * sin(angle + 3.0);
-  angle += angleIncrement;
+  // Buffer to store incoming telemetry data from RRC3
+  char telemetryBuffer[100];
+  int index = 0;
 
-  // Format the telemetry packet
+  // Timeout for waiting on telemetry data (in milliseconds)
+  const unsigned long telemetryTimeout = 1500;
+  unsigned long startTime = millis();
+
+  // Read data from RRC3_RX until a carriage return ('\r') is received or timeout occurs
+  while (millis() - startTime < telemetryTimeout) {
+    if (Serial1.available() > 0) {
+      char c = Serial1.read();
+      if (c == '\r') {
+        telemetryBuffer[index] = '\0';
+        break;
+      }
+      if (index < sizeof(telemetryBuffer) - 1) {
+        telemetryBuffer[index++] = c;
+      }
+    }
+  }
+
+  // If no valid telemetry data was received, skip sending
+  if (index == 0) {
+    Serial.println("No telemetry data received from RRC3 within timeout.");
+    return;
+  }
+
+  // RRC3 should follow telemetry data format from user manual pages 16-17
+  char* token = strtok(telemetryBuffer, ",");
+  float timestamp = 0;
+  float altitude = 0;
+  float velocity = 0;
+  float temperature = 0;
+
+  if (token != NULL) {
+    timestamp = atof(token);
+  }
+  token = strtok(NULL, ",");
+  if (token != NULL) {
+    altitude = atof(token);
+  }
+  token = strtok(NULL, ",");
+  if (token != NULL) {
+    velocity = atof(token);
+  }
+  token = strtok(NULL, ",");
+  if (token != NULL) {
+    temperature = atof(token);
+  }
+
+  // Format the telemetry packet to send by radio
   char packet[100];
   snprintf(packet, sizeof(packet),
-           "Velocity:%.2f,Altitude:%.2f,Temperature:%.2f,Pressure:%.2f",
-           velocity, altitude, temperature, pressure);
+           "Timestamp:%.1f,Altitude:%.2f,Velocity:%.2f,Temperature:%.2f",
+           timestamp, altitude, velocity, temperature);
 
   Serial.print("Sending telemetry: ");
   Serial.println(packet);
 
+  // Send the reformatted telemetry packet by radio
   rf95.setModeTx();
   rf95.send((uint8_t*)packet, strlen(packet));
   rf95.waitPacketSent();
-  // Remain in TX mode during telemetry period
 }
 
 // Flush any pending data from the radio FIFO
