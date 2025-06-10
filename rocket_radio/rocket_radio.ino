@@ -18,11 +18,6 @@
 
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
 
-// Telemetry variables
-static float angle = 0.0;
-const float angleIncrement = 0.1;
-const float amplitude      = 100.0;
-
 // Timing parameters (in milliseconds)
 const unsigned long telemetryPeriod = 2000; // 2 seconds of telemetry transmission
 const unsigned long commandWindow   = 500;  // 0.5 second window to wait for command
