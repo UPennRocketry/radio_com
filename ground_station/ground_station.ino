@@ -5,7 +5,7 @@
 #define RFM95_RST 4
 #define RFM95_INT 3
 
-#define RF95_FREQ 433.0
+#define RF95_FREQ 427.58
 
 // Define button pins for command decision
 #define SPEAKER_BUTTON_PIN 10
